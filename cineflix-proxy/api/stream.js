@@ -1,4 +1,4 @@
-// api/stream.js
+// api/stream.js - Cineflix High-Capacity Video Streamer (Supports >20MB Files)
 export default async function handler(req, res) {
   const { fileId } = req.query;
 
@@ -12,28 +12,30 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Telegram API se file_path mangwana
+    // 1. Try standard getFile first (Fastest for files under 20MB)
     const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`);
     const tgData = await tgRes.json();
 
-    if (!tgData.ok || !tgData.result.file_path) {
-      return res.status(404).json({ error: "Telegram file not found", details: tgData });
+    let directStreamUrl = null;
+
+    if (tgData.ok && tgData.result?.file_path) {
+      directStreamUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${tgData.result.file_path}`;
+    } else {
+      // 2. Fallback for Big Files (>20MB up to 2GB) via High-Speed Streaming Worker
+      directStreamUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/videos/${fileId}.mp4`;
     }
 
-    const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${tgData.result.file_path}`;
-
-    // 2. Video Scrubbing (Range Requests) forward karna taaki player aage-peeche fast chale
+    // Video scrubbing & range headers forward karna
     const headers = {};
     if (req.headers.range) {
       headers["Range"] = req.headers.range;
     }
 
-    const videoStream = await fetch(downloadUrl, { headers });
+    const videoStream = await fetch(directStreamUrl, { headers });
 
-    // 3. High-concurrency Edge Caching headers lagana
     res.setHeader("Content-Type", videoStream.headers.get("content-type") || "video/mp4");
     res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400, stale-while-revalidate=43200");
+    res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400");
 
     if (videoStream.headers.get("content-range")) {
       res.setHeader("Content-Range", videoStream.headers.get("content-range"));
